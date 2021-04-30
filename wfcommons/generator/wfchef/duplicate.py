@@ -6,7 +6,7 @@ from typing import Set, Optional, List, Union
 from uuid import uuid4
 
 import numpy as np
-from wfchef.find_microstructures import draw
+from wfchef.utils import draw
 import random
 import argparse
 import pandas as pd 
@@ -96,9 +96,13 @@ def get_parser():
         "-o", "--out", type=pathlib.Path,
         help="path to save graph image to"
     )
+    # parser.add_argument(
+    #     "-c", "--complex", action="store_true",
+    #     help="Duplicate complex microstructures - this may not result in accurate looking graphs."
+    # )
     parser.add_argument(
-        "-c", "--complex", action="store_true",
-        help="Duplicate complex microstructures - this may not result in accurate looking graphs."
+        "-e", "--extension", default="png",
+        help="Extension to save image, if not set default is png."
     )
 
     return parser
@@ -115,12 +119,12 @@ def interpolate(xs: List[float], ys: List[float], x: float) -> float:
 def main():
     parser = get_parser()
     args = parser.parse_args()
-
     path = this_dir.joinpath("microstructures", args.workflow)
     graph = duplicate(path, args.base, num_nodes=args.size)
-
+    
     duplicated = {node for node in graph.nodes if "duplicate_of" in graph.nodes[node]}
-    draw(graph, save=args.out, close=True, subgraph=duplicated)
+
+    draw(graph, save=args.out, extension=args.extension, close=True, subgraph=duplicated)
 
 if __name__ == "__main__":
     main()

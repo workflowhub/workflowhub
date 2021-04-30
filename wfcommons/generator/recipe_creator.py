@@ -1,100 +1,78 @@
 from wfchef.find_microstructures import save_microstructures
 from wfchef.chef import create_recipe
-from wfchef.metric_wfchef import compare
 from wfchef.duplicate import duplicate, NoMicrostructuresError
+from wfchef.utils import draw, create_graph
+from typing import Iterable, Union, Set, Optional, Tuple, Dict, Hashable, List
+from .workflow.abstract_recipe import WorkflowRecipe
+import subprocess
 import numpy as np
 import json
 import pickle 
 import pandas as pd
 import pathlib
+import math
+
+def graph_orders(path: pathlib.Path):
+    return sorted([(g.stem, create_graph(g).order()) for g in path.glob("*.json")], key=lambda e: e[1])
+
+def recipe_to_json(workflow_recipe: WorkflowRecipe, base_on: pathlib.Path, save: str = None, runs: int = 1):
+    parent = pathlib.Path(__file__).resolve().parent
+    _savedir = parent.joinpath(f"{workflow_recipe.name}-synth") if save is None else pathlib.Path(save)
+
+    zpad = math.ceil(math.log(runs, 10))
+    for run in range(runs):
+        savedir = _savedir if runs <= 1 else _savedir.joinpath(f"wfchef_run_{str(run).zfill(zpad)}")
+        savedir.mkdir(parents=True, exist_ok=True)
+
+        Recipe = workflow_recipe
+        for i, (name, order) in enumerate(graph_orders(base_on)):
+            try:
+                recipe = Recipe.from_num_tasks(order, exclude_graphs=[name])
+            except ValueError:
+                print(f"Skipping: {name}")
+                continue
+            wf = recipe.build_workflow()
+            file = savedir.joinpath(f'wfchef_{workflow_recipe.name}_{order}_{i}.json')
+            wf.write_json(str(file)) 
+
 
 class RecipeCreator:
     #Taken from chef.py's main
-    def create_recipe(self, name: str) -> None:
+    def create_recipe(self, name: str, r: int = 1, install: bool = False) -> None:
         parent = pathlib.Path(__file__).resolve().parent
         src = parent.joinpath("microstructures", name)
         dst = src.joinpath("recipe")
-        create_recipe(src, dst)
+        create_recipe(src, dst, runs=r)
     
-        print("Done! To install the package, run: \n")
-        print(f"  pip install {dst}")
-        print("\nor, in editable mode:\n")
-        print(f"  pip install -e {dst}")
+        if install:
+            proc = subprocess.Popen(["pip", "install", str(dst)])
+            proc.wait()
+        else:
+            print("Done! To install the package, run: \n")
+            print(f"  pip install {dst}")
+            print("\nor, in editable mode:\n")
+            print(f"  pip install -e {dst}")
     
     #Taken from find_microstructurs.py's main
-    def find_microstructures(self, filePath: str, name: str) -> None:
+    def find_microstructures(self, filePath: str, name: str, verbose: bool = False, img_type: Optional[str] = 'png', cutoff: int = 4000, highlight_all_instances: bool = False) -> None:
         path = pathlib.Path(filePath).resolve()
         parent = pathlib.Path(__file__).resolve().parent
         
         outpath = parent.joinpath("microstructures", name)
         
-        save_microstructures(path, outpath)
-    
-    #Taken from mertric_wfchef.py's main    
-    def metric(self, name: str, no_cache: bool = False) -> None:
-        verbose = True
-        this_dir = pathlib.Path(__file__).resolve().parent
+        save_microstructures(path, outpath, verbose, img_type, cutoff, highlight_all_instances)
         
-        workflow = this_dir.joinpath("microstructures", name)
-        metric_dir = workflow.joinpath('metric')
-        metric_dir.mkdir(parents=True, exist_ok=True)
-        results_path = metric_dir.joinpath("results.json")    
-        summary = json.loads(workflow.joinpath("summary.json").read_text())
-        sorted_graphs = sorted([name for name, _ in summary["base_graphs"].items()], key=lambda name: summary["base_graphs"][name]["order"])
     
-        results = {}
-        if not no_cache and results_path.is_file():
-            results = json.loads(results_path.read_text())
-    
-        labels = [f"{graph} ({summary['base_graphs'][graph]['order']})" for graph in sorted_graphs]
-        labels = [summary['base_graphs'][graph]['order'] for graph in sorted_graphs]
-        rows = [[None for _ in range(len(sorted_graphs))] for _ in range(len(sorted_graphs))]
+    def duplicate(self, name: str, base: Union[str, pathlib.Path], size: int, outpath: pathlib.Path, extension: str = "png") -> None:
+        parent = pathlib.Path(__file__).resolve().parent
+        path = parent.joinpath("microstructures", name)
+        graph = duplicate(path, base, num_nodes=size)
         
-        for i, path in enumerate(sorted_graphs[1:], start=1):
-            if verbose:
-                print(f"TEST {i} ({path})")
-            path = workflow.joinpath(path)
-            wf_real = pickle.loads(path.joinpath("base_graph.pickle").read_bytes())
-            results.setdefault(wf_real.name, {})
+        duplicated = {node for node in graph.nodes if "duplicate_of" in graph.nodes[node]}
     
-            for j, base in enumerate(sorted_graphs[:i+1]):           
-                if verbose:
-                    print(f"Created real graph ({wf_real.order()} nodes)")
-                
-                try:
-                    wf_synth = duplicate(
-                        path=workflow,
-                        base=base,
-                        num_nodes=wf_real.order(),
-                        interpolate_limit=summary["base_graphs"][base]["order"]
-                    ) 
-                except NoMicrostructuresError:
-                    print(f"No Microstructures Error")
-                    continue
-                
-                
-                dist = results.get(wf_real.name, {}).get(wf_synth.name, {}).get("dist")
-                not_in_cache = dist is None
-                if not_in_cache:
-                    dist = compare(wf_synth, wf_real)
-                    results[wf_real.name][wf_synth.name] = {
-                        "real": wf_real.order(),
-                        "synth": wf_synth.order(),
-                        "base": summary['base_graphs'][base]['order'],
-                        "dist": dist
-                    }
+        draw(graph, save=outpath, extension=extension, close=True, subgraph=duplicated)
+        
     
-                rows[j][i] = dist
-                if verbose:
-                    print(f"Created synthetic graph with {wf_synth.order()} nodes from {summary['base_graphs'][base]['order']}-node graph ({base})")
-                    print(dist)
-                    print()
     
-                if not_in_cache: # if it's cached, no need to write
-                    results_path.write_text(json.dumps(results, indent=2)) 
-                    df = pd.DataFrame(rows, columns=labels, index=labels)
-                    df = df.dropna(axis=1, how='all')
-                    df = df.dropna(axis=0, how='all')
-                    workflow.joinpath("results.csv").write_text(df.to_csv())
 
         

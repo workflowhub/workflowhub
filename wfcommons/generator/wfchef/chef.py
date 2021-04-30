@@ -8,47 +8,90 @@ import shutil
 from stringcase import camelcase, snakecase
 import pickle
 from wfchef.duplicate import duplicate, NoMicrostructuresError
-from wfchef.second_metric import compare
 import pandas as pd
+import networkx as nx
+import math
+import subprocess
+import numpy as np
 
 this_dir = pathlib.Path(__file__).resolve().parent
-
 skeleton_path = this_dir.joinpath("skeletons")
 
-def find_err(workflow: Union[str, pathlib.Path]) -> None:
+def compare_rmse(synth_graph: nx.DiGraph, real_graph: nx.DiGraph):
+    synthetic = {}
+    real = {}
+    
+    for node in synth_graph.nodes:
+        _type = synth_graph.nodes[node]['type_hash']
+        synthetic.setdefault(_type, 0)
+        synthetic[_type] +=1 
+
+    for node in real_graph.nodes:
+        _type = real_graph.nodes[node]['type_hash']
+        real.setdefault(_type, 0)
+        real[_type] +=1 
+    
+    _types = ({*synthetic.keys(), *real.keys()})
+
+    mse = math.sqrt(sum([
+        (real.get(_type, 0) - synthetic.get(_type, 0))**2
+        for _type in _types
+    ]) / len(_types))
+    return mse / real_graph.order()
+
+def find_err(workflow: Union[str, pathlib.Path], 
+             err_savepath: Optional[Union[str, pathlib.Path]] = None,
+             always_update: bool = False,
+             runs: int = 1) -> None:
     summary = json.loads(workflow.joinpath("summary.json").read_text())
     sorted_graphs = sorted([name for name, _ in summary["base_graphs"].items()], key=lambda name: summary["base_graphs"][name]["order"])
     
-    err_savepath = workflow.joinpath("metric", "err.csv")
-    err_savepath.parent.mkdir(exist_ok=True, parents=True)
+    if err_savepath:
+        err_savepath = pathlib.Path(err_savepath)
+        err_savepath.parent.mkdir(exist_ok=True, parents=True)
         
     labels = [graph for graph in sorted_graphs]
     rows = [[None for _ in range(len(sorted_graphs))] for _ in range(len(sorted_graphs))]
+    df = None 
     for i, path in enumerate(sorted_graphs[1:], start=1):
         path = workflow.joinpath(path)
         wf_real = pickle.loads(path.joinpath("base_graph.pickle").read_bytes())
 
         for j, base in enumerate(sorted_graphs[:i+1]):             
             try:
-                wf_synth = duplicate(
-                    path=workflow,
-                    base=base,
-                    num_nodes=wf_real.order(),
-                    interpolate_limit=summary["base_graphs"][base]["order"]
-                )
-                dist = compare(wf_synth, wf_real)
-                rows[j][i] = dist
+                dists = []
+                for _ in range(runs):
+                    wf_synth = duplicate(
+                        path=workflow,
+                        base=base,
+                        num_nodes=wf_real.order(),
+                        interpolate_limit=summary["base_graphs"][base]["order"]
+                    )
+                    dists.append(compare_rmse(wf_synth, wf_real))
+                rows[j][i] = np.median(dists)
             except NoMicrostructuresError:
                 print(f"No Microstructures Error")
                 continue  
 
-            df = pd.DataFrame(rows, columns=labels, index=labels)
-            df = df.dropna(axis=1, how='all')
-            df = df.dropna(axis=0, how='all')
-            err_savepath.write_text(df.to_csv())
+            if err_savepath is not None and always_update:
+                df = pd.DataFrame(rows, columns=labels, index=labels)
+                df = df.dropna(axis=1, how='all')
+                df = df.dropna(axis=0, how='all')
+                err_savepath.write_text(df.to_csv())
 
-def create_recipe(path: Union[str, pathlib.Path], dst: Union[str, pathlib.Path]) -> WorkflowRecipe:
-    find_err(path)
+    df = pd.DataFrame(rows, columns=labels, index=labels)
+    df = df.dropna(axis=1, how='all')
+    df = df.dropna(axis=0, how='all')
+    if err_savepath:
+        err_savepath.write_text(df.to_csv())
+    return df
+
+def create_recipe(path: Union[str, pathlib.Path], dst: Union[str, pathlib.Path], runs: int = 1) -> WorkflowRecipe:
+    err_savepath = path.joinpath("metric", "err.csv")
+    err_savepath.parent.mkdir(exist_ok=True, parents=True)
+    df = find_err(path, runs=runs)
+
+    err_savepath.write_text(df.to_csv())
     
     path = pathlib.Path(path).resolve(strict=True)
     wf_name = f"Workflow{camelcase(path.stem)}"
@@ -103,6 +146,16 @@ def get_parser() -> argparse.ArgumentParser:
         required=True,
         help="Workflow to duplicate"
     )
+    parser.add_argument(
+        "-i", "--install",
+        action="store_true",
+        help="if set, automatically installs the package"
+    )
+    parser.add_argument(
+        "-r", "--runs",
+        default=1, type=int,
+        help="number of runs to compute mean RMSE"
+    )
     return parser
 
 def main():
@@ -110,12 +163,16 @@ def main():
     args = parser.parse_args()
     src = this_dir.joinpath("microstructures", args.workflow)
     dst = src.joinpath("recipe")
-    create_recipe(src, dst)
+    create_recipe(src, dst, runs=args.runs)
 
-    print("Done! To install the package, run: \n")
-    print(f"  pip install {dst}")
-    print("\nor, in editable mode:\n")
-    print(f"  pip install -e {dst}")
+    if args.install:
+        proc = subprocess.Popen(["pip", "install", str(dst)])
+        proc.wait()
+    else:
+        print("Done! To install the package, run: \n")
+        print(f"  pip install {dst}")
+        print("\nor, in editable mode:\n")
+        print(f"  pip install -e {dst}")
 
 
 if __name__ == "__main__":

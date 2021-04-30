@@ -116,7 +116,7 @@ def sort_graphs(workflow_path: Union[pathlib.Path],
 def save_microstructures(workflow_path: Union[pathlib.Path], 
                          savedir: pathlib.Path, 
                          verbose: bool = False, 
-                         img_type: Optional[str] = None,
+                         img_type: Optional[str] = 'png',
                          cutoff: int = 4000,
                          highlight_all_instances: bool = False
                         ):
@@ -143,11 +143,11 @@ def save_microstructures(workflow_path: Union[pathlib.Path],
             "order": graph.order()
         }
 
-        if img_type is not None:
-            base_graph_image_path = g_savedir.joinpath(f"base_graph.{img_type}")
+        if img_type:
+            base_graph_image_path = g_savedir.joinpath(f"base_graph")
             if verbose:
                 print(f"Drawing base graph to {base_graph_image_path}")
-            draw(graph, close=True, legend=True, save=str(base_graph_image_path))
+            draw(graph, close=True, legend=False, extension= img_type, save=str(base_graph_image_path))
 
         if verbose:
             print("Finding microstructures")
@@ -165,13 +165,14 @@ def save_microstructures(workflow_path: Union[pathlib.Path],
                 "frequency": len(instances),
                 "base_graph_path": str(base_graph_path),
             }
-            if img_type is not None:
+            if img_type:
                 print(f"Drawing {ms_name}")
                 draw(
                     graph, 
                     subgraph=list(instances)[0] if not highlight_all_instances else set.union(*instances),
                     with_labels=False, 
-                    save=str(g_savedir.joinpath(ms_name).with_suffix(f".{img_type}")), 
+                    extension=img_type,
+                    save=str(g_savedir.joinpath(ms_name)), 
                     close=True
                 )
             
@@ -187,7 +188,7 @@ def get_parser() -> argparse.ArgumentParser:
     parser.add_argument('path', help="Directory of workflow JSONs", type=pathlib.Path)
     parser.add_argument("-v", "--verbose", action="store_true", help="print logs")
     parser.add_argument("-n", "--name", help="name for workflow")
-    parser.add_argument("-d", "--draw", default=None, help="output types for images. anything that matplotlib supports (png, jpg, pdf, etc.). Default is None.")
+    parser.add_argument("-d", "--draw", default='png', help="output types for images. anything that matplotlib supports (png, jpg, pdf, etc.). Default is None.")
     parser.add_argument("-c", "--cutoff", type=int, default=4000, help="max order of workflow")
     parser.add_argument("-l", "--highlight-all-instances", action="store_true", help="if set, highlights all instances of the microstructure")
 
@@ -197,9 +198,9 @@ def main():
     parser = get_parser()
     args = parser.parse_args()
     outpath = this_dir.joinpath("microstructures", args.name)
-    
+
     save_microstructures(
-        args.path, outpath, args.verbose, args.draw, args.cutoff,
+        args.path, outpath, args.verbose, img_type=args.draw, cutoff=args.cutoff,
         highlight_all_instances=args.highlight_all_instances
     )
 

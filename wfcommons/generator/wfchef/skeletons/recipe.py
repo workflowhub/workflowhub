@@ -54,7 +54,27 @@ class SkeletonRecipe(WorkflowRecipe):
         ]
 
     @classmethod
-    def from_num_tasks(cls, num_tasks: int) -> 'SkeletonRecipe':
+    def generate_nx_graph(cls, num_tasks: int, exclude_graphs: Set[str]) -> nx.DiGraph:
+        summary_path = this_dir.joinpath("microstructures", "summary.json")
+        summary = json.loads(summary_path.read_text())
+
+        metric_path = this_dir.joinpath("metric", "err.csv")
+        df = pd.read_csv(str(metric_path), index_col=0)
+        df = df.drop(exclude_graphs, axis=0, errors="ignore")
+        df = df.drop(exclude_graphs, axis=1, errors="ignore")
+        for col in df.columns:
+            df.loc[col, col] = np.nan
+
+        reference_orders = [summary["base_graphs"][col]["order"] for col in df.columns]
+        idx = np.argmin([abs(num_tasks - ref_num_tasks) for ref_num_tasks in reference_orders])
+        reference = df.columns[idx]
+
+        base = df.index[df[reference].argmin()]
+        graph = duplicate(this_dir.joinpath("microstructures"), base, num_tasks)
+        return graph
+
+    @classmethod
+    def from_num_tasks(cls, num_tasks: int, exclude_graphs: Set[str]) -> 'SkeletonRecipe':
         """
         Instantiate a Skeleton workflow recipe that will generate synthetic workflows up to
         the total number of tasks provided.
@@ -66,21 +86,7 @@ class SkeletonRecipe(WorkflowRecipe):
                  to the total number of tasks provided.
         :rtype: SkeletonRecipe
         """
-        summary_path = this_dir.joinpath("microstructures", "summary.json")
-        summary = json.loads(summary_path.read_text())
-
-        metric_path = this_dir.joinpath("metric", "err.csv")
-        df = pd.read_csv(str(metric_path), index_col=0)
-        for col in df.columns:
-            df.loc[col, col] = np.nan
-
-        reference_orders = [summary["base_graphs"][col]["order"] for col in df.columns]
-        idx = np.argmin([abs(num_tasks - ref_num_tasks) for ref_num_tasks in reference_orders])
-        reference = df.columns[idx]
-
-        base = df.index[df[reference].argmin()]
-        graph = duplicate(this_dir.joinpath("microstructures"), base, num_tasks)
-        return SkeletonRecipe(graph=graph, num_tasks=num_tasks)
+        return SkeletonRecipe(graph=cls.generate_nx_graph(num_tasks, exclude_graphs), num_tasks=num_tasks)
 
     def _load_base_graph(self) -> nx.DiGraph:
         return pickle.loads(this_dir.joinpath("base_graph.pickle").read_bytes())

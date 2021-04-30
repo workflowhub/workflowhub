@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 import matplotlib.patches as mpatches
 from typing import Iterable, Type, Union, Set, Optional, Tuple, Dict, Hashable, List
-import argparse
 import json
 from hashlib import sha256
 
@@ -110,7 +109,7 @@ def draw(g: nx.DiGraph,
          save: Optional[Union[pathlib.Path, str]] = None,
          close: bool = False,
          legend: bool = False,
-         node_size: int = 500,
+         node_size: int = 1000,
          linewidths: int = 5,
          subgraph: Set[str] = set()) -> Tuple[plt.Figure, plt.Axes]:
     fig: plt.Figure
@@ -130,11 +129,11 @@ def draw(g: nx.DiGraph,
             node_border_colors[node] = "green"
 
     pos = nx.nx_agraph.pygraphviz_layout(g, prog='dot')
-    type_set = sorted({g.nodes[node]["type_hash"] for node in g.nodes})
+    type_set = sorted({g.nodes[node]["type"] for node in g.nodes}) #not type-hash
     types = {
         t: i for i, t in enumerate(type_set)
     }
-    node_color = [types[g.nodes[node]["type_hash"]] for node in g.nodes]
+    node_color = [types[g.nodes[node]["type"]] for node in g.nodes]#not type-hash
     for node in g.nodes:
         if node in subgraph:
             g.nodes[node]["node_shape"] = "s"
@@ -146,7 +145,7 @@ def draw(g: nx.DiGraph,
         for src, dst in g.edges
     ]
     cmap = cm.get_cmap('rainbow', len(type_set))
-    nx.draw(g, pos, node_size=node_size, node_color=node_color, edgecolors=edgecolors, edge_color=edge_color, linewidths=linewidths, cmap=cmap, ax=ax, with_labels=with_labels)
+    nx.draw(g, pos,node_size=node_size, node_color=node_color, edgecolors=edgecolors, edge_color=edge_color, linewidths=linewidths, cmap=cmap, ax=ax, with_labels=with_labels)
     color_lines = [mpatches.Patch(color=cmap(types[t]), label= t) for t in type_set]
    
     if legend:
@@ -162,7 +161,7 @@ def draw(g: nx.DiGraph,
         if extension == 'dot':
             nx.drawing.nx_agraph.write_dot(g, save)
         else:
-            fig.savefig(str(save))
+            fig.savefig(f'{save}.{extension}')
 
     if close:
         plt.close(fig)
